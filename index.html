@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Mermaid to Draw.io Converter</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body { padding: 20px; }
+        .preview-container { min-height: 300px; border: 1px solid #ddd; padding: 20px; }
+        #status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row mb-4">
+            <div class="col">
+                <h1>Mermaid to Draw.io Converter</h1>
+                <p>Mermaidコードを入力して、Draw.io形式のファイルに変換します。</p>
+            </div>
+        </div>
+        
+        <div class="row mb-3">
+            <div class="col">
+                <label for="templateSelect" class="form-label">テンプレート:</label>
+                <select id="templateSelect" class="form-select">
+                    <option value="">テンプレートを選択</option>
+                    <option value="flowchart">基本フローチャート</option>
+                    <option value="sequence">シーケンス図</option>
+                    <option value="gantt">ガントチャート</option>
+                    <option value="class">クラス図</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="row mb-3">
+            <div class="col">
+                <label for="mermaidInput" class="form-label">Mermaidコード:</label>
+                <textarea id="mermaidInput" class="form-control" rows="10"></textarea>
+            </div>
+        </div>
+        
+        <div class="row mb-3">
+            <div class="col">
+                <button id="previewBtn" class="btn btn-primary">プレビュー表示</button>
+                <button id="generateBtn" class="btn btn-success ms-2">Draw.io XML生成</button>
+            </div>
+        </div>
+        
+        <div id="status" class="alert alert-info">テンプレートを選択するか、Mermaidコードを入力して「プレビュー表示」ボタンをクリックしてください。</div>
+        
+        <div class="row mb-4">
+            <div class="col">
+                <h3>プレビュー:</h3>
+                <div id="preview-content" class="preview-container"></div>
+            </div>
+        </div>
+        
+        <div id="output-area" style="display:none">
+            <h3>Draw.io XML:</h3>
+            <textarea id="xml-output" class="form-control mb-3" rows="10"></textarea>
+            <div class="mb-4">
+                <button id="copyBtn" class="btn btn-primary">XMLをコピー</button>
+                <button id="saveBtn" class="btn btn-success ms-2">ファイルとして保存</button>
+            </div>
+            <div class="alert alert-warning">
+                <h4>使用方法:</h4>
+                <ol>
+                    <li>上記のXMLをコピーするか、ファイルとして保存します</li>
+                    <li>ファイルをDraw.ioアプリで開くか、<a href="https://app.diagrams.net/" target="_blank">Draw.io Web版</a>にアップロード</li>
+                    <li>Draw.ioで編集後、再度.drawioとして保存</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // テンプレート定義
+        const templates = {
+            'flowchart': `graph TD
+    A[開始] --> B{条件分岐}
+    B -->|はい| C[処理1]
+    B -->|いいえ| D[処理2]
+    C --> E[結果1]
+    D --> F[結果2]
+    E --> G[終了]
+    F --> G`,
+            'sequence': `sequenceDiagram
+    participant ユーザー
+    participant システム
+    participant データベース
+    
+    ユーザー->>システム: リクエスト送信
+    システム->>データベース: データ検索
+    データベース-->>システム: 結果返却
+    システム-->>ユーザー: 応答表示`,
+            'gantt': `gantt
+    title プロジェクトスケジュール
+    dateFormat  YYYY-MM-DD
+    
+    section 計画フェーズ
+    要件定義           :a1, 2023-03-01, 10d
+    設計               :a2, after a1, 15d
+    
+    section 開発フェーズ
+    実装               :b1, after a2, 20d
+    テスト             :b2, after b1, 10d`,
+            'class': `classDiagram
+    class User {
+        +String name
+        +String email
+        +login()
+        +logout()
+    }
+    
+    class Product {
+        +String name
+        +Number price
+        +getDetails()
+    }
+    
+    User "1" --> "*" Order
+    Order "*" --> "*" Product`
+        };
+
+        // Mermaidの初期化
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'default',
+            securityLevel: 'loose'
+        });
+
+        // 要素取得
+        const templateSelect = document.getElementById('templateSelect');
+        const mermaidInput = document.getElementById('mermaidInput');
+        const previewBtn = document.getElementById('previewBtn');
+        const generateBtn = document.getElementById('generateBtn');
+        const previewContent = document.getElementById('preview-content');
+        const outputArea = document.getElementById('output-area');
+        const xmlOutput = document.getElementById('xml-output');
+        const copyBtn = document.getElementById('copyBtn');
+        const saveBtn = document.getElementById('saveBtn');
+        const statusEl = document.getElementById('status');
+
+        // 現在のSVG内容
+        let currentSvg = null;
+        let lastMermaidCode = "";
+
+        // ステータス表示関数
+        function updateStatus(message, isError = false) {
+            statusEl.textContent = message;
+            statusEl.className = isError ? 'alert alert-danger' : 'alert alert-success';
+        }
+
+        // テンプレート選択時の処理
+        templateSelect.addEventListener('change', function() {
+            if (this.value && templates[this.value]) {
+                mermaidInput.value = templates[this.value];
+            }
+        });
+
+        // プレビュー表示
+        previewBtn.addEventListener('click', function() {
+            updateStatus("Mermaidダイアグラムをレンダリングしています...");
+            lastMermaidCode = mermaidInput.value;
+            
+            previewContent.innerHTML = '<div class="mermaid">' + lastMermaidCode + '</div>';
+            
+            try {
+                mermaid.run()
+                    .then(function() {
+                        setTimeout(function() {
+                            const svg = previewContent.querySelector('svg');
+                            if (svg) {
+                                currentSvg = svg.outerHTML;
+                                outputArea.style.display = 'none';
+                                updateStatus("✅ ダイアグラムのレンダリングが完了しました！");
+                            } else {
+                                updateStatus("エラー: SVG要素が見つかりません。", true);
+                            }
+                        }, 500);
+                    })
+                    .catch(function(error) {
+                        updateStatus("エラー: " + error.message, true);
+                    });
+            } catch (error) {
+                updateStatus("エラー: " + error.message, true);
+            }
+        });
+
+        // Draw.io XML生成
+        generateBtn.addEventListener('click', function() {
+            if (!currentSvg) {
+                updateStatus("SVGがまだ取得されていません。先にプレビューを表示してください。", true);
+                return;
+            }
+
+            updateStatus("Draw.io XML形式に変換しています...");
+            
+            try {
+                // SVGを特殊エンコード
+                function processSvgForDrawIo(svg) {
+                    // %をエスケープして一時的に置き換え
+                    let processedSvg = svg.replace(/%/g, '__PERCENT__');
+                    
+                    // エンコード
+                    let encoded = encodeURIComponent(processedSvg);
+                    
+                    // 置換処理
+                    return encoded
+                        .replace(/%20/g, ' ')
+                        .replace(/__PERCENT__/g, '%');
+                }
+                
+                // エンコードしたSVG
+                const encodedSvg = processSvgForDrawIo(currentSvg);
+                
+                // 現在の日時
+                const currentTime = new Date().toISOString();
+                
+                // ユニークなID
+                const uniqueId = 'm7ok' + Math.random().toString(36).substr(2, 8);
+                
+                // XML生成
+                const drawioXml = `<mxfile host="app.diagrams.net" modified="${currentTime}" agent="Mozilla/5.0" etag="${uniqueId}" version="21.3.2">
+  <diagram name="Page-1" id="mermaid-${uniqueId}">
+    <mxGraphModel dx="1306" dy="836" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="${uniqueId}-2" value="" style="shape=image;verticalLabelPosition=bottom;verticalAlign=top;imageAspect=0;image=data:image/svg+xml,${encodedSvg}" vertex="1" parent="1">
+          <mxGeometry x="10" y="10" width="800" height="600" as="geometry" />
+        </mxCell>
+        <!-- Original Mermaid Code:
+${lastMermaidCode}
+-->
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>`;
+
+                // XMLを表示
+                xmlOutput.value = drawioXml;
+                outputArea.style.display = 'block';
+                
+                updateStatus("✅ Draw.io XML生成が完了しました！");
+            } catch (error) {
+                updateStatus("エラー: " + error.message, true);
+            }
+        });
+
+        // コピーボタン
+        copyBtn.addEventListener('click', function() {
+            xmlOutput.select();
+            document.execCommand('copy');
+            updateStatus("✅ XMLをクリップボードにコピーしました！");
+        });
+
+        // 保存ボタン
+        saveBtn.addEventListener('click', function() {
+            const blob = new Blob([xmlOutput.value], {type: 'application/xml'});
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'diagram.drawio';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            updateStatus("✅ diagram.drawioとして保存しました！");
+        });
+
+        // 初期化時のデフォルトコード設定
+        mermaidInput.value = templates['flowchart'];
+    </script>
+</body>
+</html>
