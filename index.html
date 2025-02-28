@@ -200,16 +200,8 @@
             try {
                 // SVGを特殊エンコード
                 function processSvgForDrawIo(svg) {
-                    // %をエスケープして一時的に置き換え
-                    let processedSvg = svg.replace(/%/g, '__PERCENT__');
-                    
-                    // エンコード
-                    let encoded = encodeURIComponent(processedSvg);
-                    
-                    // 置換処理
-                    return encoded
-                        .replace(/%20/g, ' ')
-                        .replace(/__PERCENT__/g, '%');
+                    // Unicode文字を適切に処理するために、まずUTF-8に変換してからBase64エンコード
+                    return btoa(unescape(encodeURIComponent(svg)));
                 }
                 
                 // エンコードしたSVG
@@ -228,7 +220,7 @@
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="${uniqueId}-2" value="" style="shape=image;verticalLabelPosition=bottom;verticalAlign=top;imageAspect=0;image=data:image/svg+xml,${encodedSvg}" vertex="1" parent="1">
+        <mxCell id="${uniqueId}-2" value="" style="shape=image;verticalLabelPosition=bottom;verticalAlign=top;imageAspect=0;image=data:image/svg+xml;base64,${processSvgForDrawIo(currentSvg)}" vertex="1" parent="1">
           <mxGeometry x="10" y="10" width="800" height="600" as="geometry" />
         </mxCell>
         <!-- Original Mermaid Code:
