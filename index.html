@@ -188,6 +188,17 @@
             }
         });
 
+        // ダイアグラムタイプを判定する関数
+        function detectDiagramType(code) {
+            code = code.trim();
+            if (code.startsWith('sequenceDiagram')) return 'sequence';
+            if (code.startsWith('graph') || code.startsWith('flowchart')) return 'flowchart';
+            if (code.startsWith('gantt')) return 'gantt';
+            if (code.startsWith('classDiagram')) return 'class';
+            return 'unknown';
+        }
+
+        // === シーケンス図関連処理 ===
         // メッセージタイプを検出する関数
         function detectMessageType(line) {
             if (line.includes('->>')) return { type: 'solid', separator: '->>' };
@@ -213,7 +224,7 @@
                         const parts = line.split(messageType.separator);
                         if (parts && parts.length === 2) {
                             const source = parts[0].trim();
-                            let target = parts[1].trim();
+                            let target = parts[1];
                             let text = '';
                             
                             if (target.includes(':')) {
@@ -236,15 +247,12 @@
             return { participants, messages };
         }
 
-        // ネイティブ図形生成（シーケンス図）
+        // シーケンス図のネイティブ生成
         function generateSequenceNative(code) {
             const { participants, messages } = parseSequenceDiagram(code);
             
             // 現在の日時
             const currentTime = new Date().toISOString();
-            
-            // ユニークなID
-            const uniqueId = 'native' + Math.random().toString(36).substr(2, 8);
             
             // Draw.io XMLを生成
             let xml = `<mxfile host="Electron" modified="${currentTime}" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/26.0.9 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36" version="26.0.9">
@@ -272,7 +280,7 @@
         <mxCell id="line_${index}" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=1;" edge="1" parent="1">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
             <mxPoint x="${x}" y="80" as="sourcePoint" />
-            <mxPoint x="${x}" y="${80 + 40 + messages.length * 40}" as="targetPoint" />
+            <mxPoint x="${x}" y="${80 + 40 + (messages.length) * 40}" as="targetPoint" />
           </mxGeometry>
         </mxCell>`;
             });
@@ -294,8 +302,8 @@
 
                 // メッセージスタイル（実線または破線）
                 const style = message.isDashed ? 
-                    'edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;' : 
-                    'edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;';
+                    'edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;endArrow=classic;endFill=1;' : 
+                    'edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=classic;endFill=1;';
                 
                 xml += `
         <mxCell id="msg_${index}" value="${message.text}" style="${style}" edge="1" parent="1">
@@ -309,7 +317,7 @@
             // フッターを追加
             participants.forEach((participant, index) => {
                 const x = 40 + index * 200;
-                const y = 80 + 40 + messages.length * 40;
+                const y = 80 + 40 + (messages.length) * 40;
                 
                 xml += `
         <mxCell id="footer_${index}" value="${participant}" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
@@ -327,23 +335,39 @@
             return xml;
         }
 
+        // === フローチャート関連処理 ===
+        // フローチャート解析用の正規表現
+        const nodeRegex = /([A-Za-z0-9_]+)\s*(\[.*?\]|\(.*?\)|{.*?}|\>.*?\]|\[.*?\])/g;
+        const connectionRegex = /([A-Za-z0-9_]+)\s*--(?:-+)(?:>|&gt;)\s*(?:\|([^|]+)\|\s*)?([A-Za-z0-9_]+)/g;
+
         // フローチャートの解析
         function parseFlowchart(code) {
             const lines = code.split('\n').map(line => line.trim()).filter(line => line);
             const nodes = new Map();
             const connections = [];
             
-            // ノード情報を抽出（フォーマット: A[label]）
-            const nodeRegex = /([A-Za-z0-9_]+)(?:\[([^\]]+)\]|\(([^\)]+)\)|{([^}]+)})/g;
-            const connectionRegex = /([A-Za-z0-9_]+)\s*--(?:-+)(?:>|&gt;)\s*(?:\|([^|]+)\|\s*)?([A-Za-z0-9_]+)/g;
-            
-            // ノードの検出
+            // ノード情報を抽出
             lines.forEach(line => {
                 let match;
                 while ((match = nodeRegex.exec(line)) !== null) {
                     const id = match[1];
-                    const label = match[2] || match[3] || match[4] || id;
-                    const shape = match[2] ? 'rectangle' : (match[3] ? 'rounded' : 'rhombus');
+                    let shape = 'rectangle';
+                    let label = '';
+                    
+                    // 形状とラベルを判定
+                    const nodeContent = match[2];
+                    if (nodeContent.startsWith('[') && nodeContent.endsWith(']')) {
+                        shape = 'rectangle';
+                        label = nodeContent.substring(1, nodeContent.length - 1);
+                    } else if (nodeContent.startsWith('(') && nodeContent.endsWith(')')) {
+                        shape = 'rounded';
+                        label = nodeContent.substring(1, nodeContent.length - 1);
+                    } else if (nodeContent.startsWith('{') && nodeContent.endsWith('}')) {
+                        shape = 'rhombus';
+                        label = nodeContent.substring(1, nodeContent.length - 1);
+                    } else {
+                        label = nodeContent;
+                    }
                     
                     if (!nodes.has(id)) {
                         nodes.set(id, { id, label, shape });
@@ -354,7 +378,6 @@
             // 接続の検出
             lines.forEach(line => {
                 let match;
-                connectionRegex.lastIndex = 0;
                 while ((match = connectionRegex.exec(line)) !== null) {
                     const source = match[1];
                     const label = match[2] || '';
@@ -372,60 +395,107 @@
                 }
             });
             
-            return { nodes: Array.from(nodes.values()), connections };
+            return { 
+                nodes: Array.from(nodes.values()), 
+                connections
+            };
         }
 
-        // ネイティブ図形生成（フローチャート）
-        function generateFlowchartNative(code) {
-            const { nodes, connections } = parseFlowchart(code);
+        // フローチャートノードの配置を計算
+        function layoutFlowchartNodes(nodes, connections) {
+            const nodePositions = new Map();
+            const visited = new Set();
+            const levels = new Map(); // ノードの深さレベル
+            const columns = new Map(); // 各レベルでの列位置
             
-            // 現在の日時
-            const currentTime = new Date().toISOString();
+            // 依存関係グラフを構築
+            const graph = new Map();
+            nodes.forEach(node => {
+                graph.set(node.id, []);
+            });
             
-            // ユニークなID
-            const uniqueId = 'native' + Math.random().toString(36).substr(2, 8);
+            connections.forEach(conn => {
+                if (graph.has(conn.source)) {
+                    graph.get(conn.source).push(conn.target);
+                }
+            });
             
-            // レイアウト計算（簡易版）
-            let grid = {};
-            let maxRow = 0;
-            let maxCol = 0;
-            
-            // 簡易的なレイアウト計算（深さ優先探索）
-            function calculateLayout() {
-                const visited = new Set();
+            // 深さ優先探索でレベルを決定
+            function dfs(nodeId, level = 0) {
+                if (visited.has(nodeId)) return;
+                visited.add(nodeId);
                 
-                function dfs(nodeId, row, col) {
-                    if (visited.has(nodeId)) return;
-                    visited.add(nodeId);
-                    
-                    grid[nodeId] = { row, col };
-                    maxRow = Math.max(maxRow, row);
-                    maxCol = Math.max(maxCol, col);
-                    
-                    let childCol = col;
-                    const children = connections.filter(conn => conn.source === nodeId).map(conn => conn.target);
-                    
-                    children.forEach((childId, index) => {
-                        dfs(childId, row + 1, col + index);
-                        childCol = col + index + 1;
-                    });
+                // このノードのレベルを記録
+                levels.set(nodeId, level);
+                
+                // このレベルでの列数を更新
+                if (!columns.has(level)) {
+                    columns.set(level, 0);
+                } else {
+                    columns.set(level, columns.get(level) + 1);
                 }
                 
-                // 最初のノードから開始
-                if (nodes.length > 0) {
-                    dfs(nodes[0].id, 0, 0);
-                }
-                
-                // 未訪問のノードを処理
-                nodes.forEach(node => {
-                    if (!visited.has(node.id)) {
-                        maxCol++;
-                        dfs(node.id, 0, maxCol);
-                    }
+                // 子ノードを処理
+                const children = graph.get(nodeId) || [];
+                children.forEach(childId => {
+                    dfs(childId, level + 1);
                 });
             }
             
-            calculateLayout();
+            // 開始ノードを検索（入力がないノード）
+            const startNodes = [];
+            nodes.forEach(node => {
+                let hasIncoming = false;
+                connections.forEach(conn => {
+                    if (conn.target === node.id) {
+                        hasIncoming = true;
+                    }
+                });
+                if (!hasIncoming) {
+                    startNodes.push(node.id);
+                }
+            });
+            
+            // ルートが見つからない場合は最初のノードを使用
+            if (startNodes.length === 0 && nodes.length > 0) {
+                startNodes.push(nodes[0].id);
+            }
+            
+            // 各開始ノードからDFSを実行
+            startNodes.forEach(nodeId => {
+                dfs(nodeId);
+            });
+            
+            // 未訪問のノードを扱う
+            nodes.forEach(node => {
+                if (!visited.has(node.id)) {
+                    dfs(node.id);
+                }
+            });
+            
+            // 位置を割り当て
+            nodes.forEach(node => {
+                const level = levels.get(node.id) || 0;
+                const col = columns.get(level) || 0;
+                
+                nodePositions.set(node.id, {
+                    x: 50 + level * 180,
+                    y: 50 + col * 100
+                });
+            });
+            
+            return nodePositions;
+        }
+
+        // フローチャートのネイティブ生成
+        function generateFlowchartNative(code) {
+            const { nodes, connections } = parseFlowchart(code);
+            
+            // ノードの配置を計算
+            const positions = layoutFlowchartNodes(nodes, connections);
+            
+            // 現在の日時
+            const currentTime = new Date().toISOString();
             
             // Draw.io XMLを生成
             let xml = `<mxfile host="Electron" modified="${currentTime}" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/26.0.9 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36" version="26.0.9">
@@ -439,9 +509,7 @@
             
             // ノードを追加
             nodes.forEach(node => {
-                const pos = grid[node.id] || { row: 0, col: 0 };
-                const x = 50 + pos.col * 150;
-                const y = 50 + pos.row * 100;
+                const pos = positions.get(node.id) || { x: 50, y: 50 };
                 
                 let style = "";
                 
@@ -461,16 +529,447 @@
                 
                 xml += `
         <mxCell id="node_${node.id}" value="${node.label}" style="${style}" vertex="1" parent="1">
-          <mxGeometry x="${x}" y="${y}" width="120" height="60" as="geometry" />
+          <mxGeometry x="${pos.x}" y="${pos.y}" width="120" height="60" as="geometry" />
         </mxCell>`;
             });
             
             // 接続を追加
             connections.forEach((conn, index) => {
+                let style = "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;exitX=1;exitY=0.5;";
+                
                 xml += `
-        <mxCell id="conn_${index}" value="${conn.label}" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="node_${conn.source}" target="node_${conn.target}">
+        <mxCell id="conn_${index}" value="${conn.label}" style="${style}" edge="1" parent="1" source="node_${conn.source}" target="node_${conn.target}">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>`;
+            });
+            
+            // XMLを完成
+            xml += `
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>`;
+            
+            return xml;
+        }
+
+        // === ガントチャート関連処理 ===
+        // ガントチャートの解析
+        function parseGanttChart(code) {
+            const lines = code.split('\n').map(line => line.trim()).filter(line => line);
+            let title = "";
+            let dateFormat = "YYYY-MM-DD";
+            const sections = [];
+            let currentSection = null;
+            
+            lines.forEach(line => {
+                if (line.startsWith('title ')) {
+                    title = line.replace('title ', '').trim();
+                } else if (line.startsWith('dateFormat ')) {
+                    dateFormat = line.replace('dateFormat ', '').trim();
+                } else if (line.startsWith('section ')) {
+                    const sectionName = line.replace('section ', '').trim();
+                    currentSection = {
+                        name: sectionName,
+                        tasks: []
+                    };
+                    sections.push(currentSection);
+                } else if (currentSection && line.includes(':')) {
+                    const parts = line.split(':');
+                    const taskName = parts[0].trim();
+                    const taskOptions = parts[1].trim().split(',').map(o => o.trim());
+                    
+                    // タスクIDと期間情報を解析
+                    let taskId = '';
+                    let startDate = '';
+                    let duration = '';
+                    let dependencies = [];
+                    
+                    taskOptions.forEach(option => {
+                        if (option.match(/^[a-zA-Z0-9]+$/)) {
+                            taskId = option;
+                        } else if (option.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                            startDate = option;
+                        } else if (option.match(/^\d+d$/)) {
+                            duration = option;
+                        } else if (option.startsWith('after ')) {
+                            dependencies.push(option.replace('after ', ''));
+                        }
+                    });
+                    
+                    currentSection.tasks.push({
+                        name: taskName,
+                        id: taskId,
+                        startDate,
+                        duration,
+                        dependencies
+                    });
+                }
+            });
+            
+            return {
+                title,
+                dateFormat,
+                sections
+            };
+        }
+
+        // 日付処理ヘルパー関数
+        function addDays(dateStr, days) {
+            const date = new Date(dateStr);
+            date.setDate(date.getDate() + Number(days.replace('d', '')));
+            return date.toISOString().split('T')[0];
+        }
+
+        // ガントチャートのネイティブ生成
+        function generateGanttChartNative(code) {
+            const { title, sections } = parseGanttChart(code);
+            
+            // 現在の日時
+            const currentTime = new Date().toISOString();
+            
+            // Draw.io XMLを生成
+            let xml = `<mxfile host="Electron" modified="${currentTime}" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/26.0.9 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36" version="26.0.9">
+  <diagram name="Page-1" id="mermaid-gantt">
+    <mxGraphModel dx="1306" dy="836" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- タイトル -->
+        <mxCell id="gantt_title" value="${title}" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="290" y="20" width="250" height="30" as="geometry" />
+        </mxCell>`;
+            
+            // セクションとタスクを描画
+            let yPos = 70;
+            const itemHeight = 30;
+            const xStart = 200;  // タスクバーの開始X位置
+            const dayWidth = 20; // 1日の幅
+            
+            // 期間を計算
+            const allStartDates = [];
+            const allEndDates = [];
+            
+            sections.forEach(section => {
+                section.tasks.forEach(task => {
+                    if (task.startDate) {
+                        allStartDates.push(new Date(task.startDate));
+                        if (task.duration) {
+                            const endDate = new Date(task.startDate);
+                            endDate.setDate(endDate.getDate() + parseInt(task.duration));
+                            allEndDates.push(endDate);
+                        }
+                    }
+                });
+            });
+            
+            // 最小日付と最大日付
+            const minDate = allStartDates.length > 0 ? new Date(Math.min(...allStartDates)) : new Date();
+            const maxDate = allEndDates.length > 0 ? new Date(Math.max(...allEndDates)) : new Date();
+            
+            // 各セクションを追加
+            sections.forEach((section, sectionIndex) => {
+                // セクション名
+                xml += `
+        <mxCell id="section_${sectionIndex}" value="${section.name}" style="text;html=1;strokeColor=none;fillColor=#f5f5f5;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="40" y="${yPos}" width="150" height="30" as="geometry" />
+        </mxCell>`;
+                
+                yPos += 40;
+                
+                // タスクを追加
+                section.tasks.forEach((task, taskIndex) => {
+                    const taskId = `task_${sectionIndex}_${taskIndex}`;
+                    
+                    // タスク名
+                    xml += `
+        <mxCell id="${taskId}_name" value="${task.name}" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="${yPos}" width="130" height="30" as="geometry" />
+        </mxCell>`;
+                    
+                    // タスクバー
+                    if (task.startDate) {
+                        const taskStart = new Date(task.startDate);
+                        const dayDiff = Math.floor((taskStart - minDate) / (1000 * 60 * 60 * 24));
+                        const xPos = xStart + dayDiff * dayWidth;
+                        
+                        let taskWidth = 100; // デフォルト幅
+                        if (task.duration) {
+                            const days = parseInt(task.duration);
+                            taskWidth = days * dayWidth;
+                        }
+                        
+                        xml += `
+        <mxCell id="${taskId}_bar" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="${xPos}" y="${yPos}" width="${taskWidth}" height="${itemHeight}" as="geometry" />
+        </mxCell>`;
+                        
+                        // タスク内のテキスト
+                        xml += `
+        <mxCell id="${taskId}_label" value="${task.name}" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="${xPos}" y="${yPos}" width="${taskWidth}" height="${itemHeight}" as="geometry" />
+        </mxCell>`;
+                    }
+                    
+                    yPos += 40;
+                });
+                
+                yPos += 20; // セクション間のスペース
+            });
+            
+            // 日付ラベル
+            xml += `
+        <mxCell id="timeline" value="" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;" vertex="1" parent="1">
+          <mxGeometry x="${xStart}" y="${yPos}" width="${(maxDate - minDate) / (1000 * 60 * 60 * 24) * dayWidth + 100}" height="10" as="geometry" />
+        </mxCell>`;
+            
+            // 依存関係の矢印
+            let arrowCounter = 0;
+            sections.forEach((section, sectionIndex) => {
+                section.tasks.forEach((task, taskIndex) => {
+                    if (task.dependencies && task.dependencies.length > 0) {
+                        task.dependencies.forEach(depId => {
+                            let sourceTaskFound = false;
+                            
+                            // 依存元タスクを検索
+                            sections.forEach((s, si) => {
+                                s.tasks.forEach((t, ti) => {
+                                    if (t.id === depId) {
+                                        sourceTaskFound = true;
+                                        
+                                        xml += `
+        <mxCell id="arrow_${arrowCounter++}" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="task_${si}_${ti}_bar" target="task_${sectionIndex}_${taskIndex}_bar">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>`;
+                                    }
+                                });
+                            });
+                        });
+                    }
+                });
+            });
+            
+            // XMLを完成
+            xml += `
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>`;
+            
+            return xml;
+        }
+
+        // === クラス図関連処理 ===
+        // クラス図の解析
+        function parseClassDiagram(code) {
+            const lines = code.split('\n').map(line => line.trim()).filter(line => line);
+            const classes = new Map();
+            const relationships = [];
+            
+            let currentClass = null;
+            
+            lines.forEach(line => {
+                // クラス定義行
+                if (line.startsWith('class ') && line.includes('{')) {
+                    const className = line.substring(6, line.indexOf('{')).trim();
+                    currentClass = {
+                        name: className,
+                        attributes: [],
+                        methods: []
+                    };
+                    classes.set(className, currentClass);
+                } 
+                // クラス定義行（閉じ括弧なし）
+                else if (line.startsWith('class ') && !line.includes('{')) {
+                    const className = line.substring(6).trim();
+                    currentClass = {
+                        name: className,
+                        attributes: [],
+                        methods: []
+                    };
+                    classes.set(className, currentClass);
+                } 
+                // クラス閉じ括弧
+                else if (line === '}') {
+                    currentClass = null;
+                } 
+                // 属性または操作
+                else if (currentClass && line !== '{') {
+                    if (line.includes('(') && line.includes(')')) {
+                        // メソッド
+                        currentClass.methods.push(line);
+                    } else {
+                        // 属性
+                        currentClass.attributes.push(line);
+                    }
+                } 
+                // 関連性
+                else if (line.includes('-->') || line.includes('<--') || line.includes('--')) {
+                    let parts;
+                    let sourceClass, targetClass, label, direction;
+                    
+                    if (line.includes('-->')) {
+                        parts = line.split('-->');
+                        direction = 'forward';
+                    } else if (line.includes('<--')) {
+                        parts = line.split('<--');
+                        direction = 'backward';
+                        // 順序反転
+                        [parts[0], parts[1]] = [parts[1], parts[0]];
+                    } else if (line.includes('--')) {
+                        parts = line.split('--');
+                        direction = 'none';
+                    }
+                    
+                    if (parts && parts.length === 2) {
+                        // カーディナリティ/ラベルの処理
+                        let sourceCard = '', targetCard = '', relationLabel = '';
+                        
+                        if (parts[0].includes('"')) {
+                            const labelMatch = parts[0].match(/"([^"]+)"/);
+                            if (labelMatch) {
+                                sourceCard = labelMatch[1];
+                                parts[0] = parts[0].replace(` "${sourceCard}"`, '');
+                            }
+                        }
+                        
+                        if (parts[1].includes('"')) {
+                            const labelMatch = parts[1].match(/"([^"]+)"/);
+                            if (labelMatch) {
+                                targetCard = labelMatch[1];
+                                parts[1] = parts[1].replace(` "${targetCard}"`, '');
+                            }
+                        }
+                        
+                        sourceClass = parts[0].trim();
+                        targetClass = parts[1].trim();
+                        
+                        relationships.push({
+                            source: sourceClass,
+                            target: targetClass,
+                            sourceCardinality: sourceCard,
+                            targetCardinality: targetCard,
+                            label: relationLabel,
+                            direction
+                        });
+                    }
+                }
+            });
+            
+            return {
+                classes: Array.from(classes.values()),
+                relationships
+            };
+        }
+
+        // クラス図のネイティブ生成
+        function generateClassDiagramNative(code) {
+            const { classes, relationships } = parseClassDiagram(code);
+            
+            // 現在の日時
+            const currentTime = new Date().toISOString();
+            
+            // クラスの配置を計算
+            const classPositions = new Map();
+            const xSpacing = 220;
+            const ySpacing = 180;
+            const columns = 3;
+            
+            classes.forEach((cls, index) => {
+                const col = index % columns;
+                const row = Math.floor(index / columns);
+                
+                classPositions.set(cls.name, {
+                    x: 50 + col * xSpacing,
+                    y: 50 + row * ySpacing
+                });
+            });
+            
+            // Draw.io XMLを生成
+            let xml = `<mxfile host="Electron" modified="${currentTime}" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/26.0.9 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36" version="26.0.9">
+  <diagram name="Page-1" id="mermaid-class">
+    <mxGraphModel dx="1306" dy="836" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- クラス定義 -->`;
+            
+            // クラスを追加
+            classes.forEach(cls => {
+                const pos = classPositions.get(cls.name) || { x: 50, y: 50 };
+                const className = cls.name;
+                
+                // クラスの高さを計算
+                const attributeHeight = cls.attributes.length * 20;
+                const methodHeight = cls.methods.length * 20;
+                const totalHeight = 30 + attributeHeight + methodHeight;
+                
+                // クラス名セクション
+                xml += `
+        <mxCell id="class_${className}" value="${className}" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;" vertex="1" parent="1">
+          <mxGeometry x="${pos.x}" y="${pos.y}" width="180" height="${totalHeight}" as="geometry" />
+        </mxCell>`;
+                
+                // 属性セクション
+                cls.attributes.forEach((attr, index) => {
+                    xml += `
+        <mxCell id="class_${className}_attr_${index}" value="${attr}" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;" vertex="1" parent="class_${className}">
+          <mxGeometry y="30" width="180" height="20" as="geometry" />
+        </mxCell>`;
+                });
+                
+                // 区切り線
+                xml += `
+        <mxCell id="class_${className}_line" value="" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;" vertex="1" parent="class_${className}">
+          <mxGeometry y="${30 + attributeHeight}" width="180" height="8" as="geometry" />
+        </mxCell>`;
+                
+                // メソッドセクション
+                cls.methods.forEach((method, index) => {
+                    xml += `
+        <mxCell id="class_${className}_method_${index}" value="${method}" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;" vertex="1" parent="class_${className}">
+          <mxGeometry y="${30 + attributeHeight + 8}" width="180" height="20" as="geometry" />
+        </mxCell>`;
+                });
+            });
+            
+            // 関連性を追加
+            relationships.forEach((rel, index) => {
+                const sourcePos = classPositions.get(rel.source) || { x: 50, y: 50 };
+                const targetPos = classPositions.get(rel.target) || { x: 250, y: 50 };
+                
+                // 関連性のスタイル
+                let style = "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;";
+                
+                if (rel.direction === 'forward') {
+                    style += "endArrow=open;endFill=0;";
+                } else if (rel.direction === 'backward') {
+                    style += "startArrow=open;startFill=0;";
+                } else {
+                    style += "endArrow=none;";
+                }
+                
+                xml += `
+        <mxCell id="rel_${index}" value="${rel.label || ''}" style="${style}" edge="1" parent="1" source="class_${rel.source}" target="class_${rel.target}">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>`;
+                
+                // カーディナリティ
+                if (rel.sourceCardinality) {
+                    xml += `
+        <mxCell id="rel_${index}_source_card" value="${rel.sourceCardinality}" style="edgeLabel;resizable=0;html=1;align=left;verticalAlign=bottom;" connectable="0" vertex="1" parent="rel_${index}">
+          <mxGeometry x="-1" relative="1" as="geometry" />
+        </mxCell>`;
+                }
+                
+                if (rel.targetCardinality) {
+                    xml += `
+        <mxCell id="rel_${index}_target_card" value="${rel.targetCardinality}" style="edgeLabel;resizable=0;html=1;align=right;verticalAlign=bottom;" connectable="0" vertex="1" parent="rel_${index}">
+          <mxGeometry x="1" relative="1" as="geometry" />
+        </mxCell>`;
+                }
             });
             
             // XMLを完成
@@ -494,15 +993,24 @@
             
             try {
                 let drawioXml = "";
+                const diagramType = detectDiagramType(lastMermaidCode);
                 
-                // ダイアグラムタイプに応じた変換処理
-                if (lastMermaidCode.trim().startsWith('sequenceDiagram')) {
-                    drawioXml = generateSequenceNative(lastMermaidCode);
-                } else if (lastMermaidCode.trim().startsWith('graph')) {
-                    drawioXml = generateFlowchartNative(lastMermaidCode);
-                } else {
-                    updateStatus("このタイプのダイアグラムは現在サポートされていません。", true);
-                    return;
+                switch (diagramType) {
+                    case 'sequence':
+                        drawioXml = generateSequenceNative(lastMermaidCode);
+                        break;
+                    case 'flowchart':
+                        drawioXml = generateFlowchartNative(lastMermaidCode);
+                        break;
+                    case 'gantt':
+                        drawioXml = generateGanttChartNative(lastMermaidCode);
+                        break;
+                    case 'class':
+                        drawioXml = generateClassDiagramNative(lastMermaidCode);
+                        break;
+                    default:
+                        updateStatus(`このタイプのダイアグラム（${diagramType}）は現在サポートされていません。`, true);
+                        return;
                 }
                 
                 // XMLを表示
