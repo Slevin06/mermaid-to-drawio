@@ -200,8 +200,9 @@
             try {
                 // SVGを特殊エンコード
                 function processSvgForDrawIo(svg) {
-                    // Unicode文字を適切に処理するために、まずUTF-8に変換してからBase64エンコード
-                    return btoa(unescape(encodeURIComponent(svg)));
+                  // UTF-8バイト配列に変換してからBase64エンコード
+                  const utf8Bytes = new TextEncoder().encode(svg);
+                  return btoa(Array.from(utf8Bytes, byte => String.fromCharCode(byte)).join(''));
                 }
                 
                 // エンコードしたSVG
@@ -220,7 +221,7 @@
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="${uniqueId}-2" value="" style="shape=image;verticalLabelPosition=bottom;verticalAlign=top;imageAspect=0;image=data:image/svg+xml;base64,${processSvgForDrawIo(currentSvg)}" vertex="1" parent="1">
+        <mxCell id="${uniqueId}-2" value="" style="shape=image;verticalLabelPosition=bottom;verticalAlign=top;imageAspect=0;image=data:image/svg+xml;base64,${encodedSvg}" vertex="1" parent="1">
           <mxGeometry x="10" y="10" width="800" height="600" as="geometry" />
         </mxCell>
         <!-- Original Mermaid Code:
