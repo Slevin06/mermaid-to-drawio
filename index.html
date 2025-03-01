@@ -43,8 +43,7 @@
         <div class="row mb-3">
             <div class="col">
                 <button id="previewBtn" class="btn btn-primary">プレビュー表示</button>
-                <button id="generateBtn" class="btn btn-success ms-2">Draw.io XML生成</button>
-                <button id="nativeBtn" class="btn btn-info ms-2">ネイティブ図形で生成</button>
+                <button id="nativeBtn" class="btn btn-success ms-2">ネイティブ図形で生成</button>
             </div>
         </div>
         
@@ -135,7 +134,6 @@
         const templateSelect = document.getElementById('templateSelect');
         const mermaidInput = document.getElementById('mermaidInput');
         const previewBtn = document.getElementById('previewBtn');
-        const generateBtn = document.getElementById('generateBtn');
         const nativeBtn = document.getElementById('nativeBtn');
         const previewContent = document.getElementById('preview-content');
         const outputArea = document.getElementById('output-area');
@@ -160,14 +158,6 @@
                 mermaidInput.value = templates[this.value];
             }
         });
-
-        // SVG Base64エンコード (UTF-8文字対応)
-        function safeBase64Encode(svg) {
-            // UTF-8バイト配列に変換
-            const utf8Bytes = new TextEncoder().encode(svg);
-            // バイト配列を文字列に変換してからBase64エンコード
-            return btoa(Array.from(utf8Bytes, byte => String.fromCharCode(byte)).join(''));
-        }
 
         // プレビュー表示
         previewBtn.addEventListener('click', function() {
@@ -198,54 +188,302 @@
             }
         });
 
-        // Draw.io XML生成 (SVG埋め込み版)
-        generateBtn.addEventListener('click', function() {
-            if (!currentSvg) {
-                updateStatus("SVGがまだ取得されていません。先にプレビューを表示してください。", true);
-                return;
-            }
+        // メッセージタイプを検出する関数
+        function detectMessageType(line) {
+            if (line.includes('->>')) return { type: 'solid', separator: '->>' };
+            if (line.includes('->')) return { type: 'solid', separator: '->' };
+            if (line.includes('-->>')) return { type: 'dashed', separator: '-->>'}; 
+            if (line.includes('-->')) return { type: 'dashed', separator: '-->'};
+            return null;
+        }
 
-            updateStatus("Draw.io XML形式に変換しています...");
+        // シーケンス図の解析
+        function parseSequenceDiagram(code) {
+            const lines = code.split('\n').map(line => line.trim()).filter(line => line);
+            const participants = [];
+            const messages = [];
             
-            try {
-                // エンコードしたSVG
-                const encodedSvg = safeBase64Encode(currentSvg);
-                
-                // 現在の日時
-                const currentTime = new Date().toISOString();
-                
-                // ユニークなID
-                const uniqueId = 'm7ok' + Math.random().toString(36).substr(2, 8);
-                
-                // XML生成
-                const drawioXml = `<mxfile host="app.diagrams.net" modified="${currentTime}" agent="Mozilla/5.0" etag="${uniqueId}" version="21.3.2">
-  <diagram name="Page-1" id="mermaid-${uniqueId}">
+            // 参加者とメッセージの解析
+            lines.forEach(line => {
+                if (line.startsWith('participant ')) {
+                    participants.push(line.replace('participant ', '').trim());
+                } else {
+                    const messageType = detectMessageType(line);
+                    if (messageType) {
+                        const parts = line.split(messageType.separator);
+                        if (parts && parts.length === 2) {
+                            const source = parts[0].trim();
+                            let target = parts[1].trim();
+                            let text = '';
+                            
+                            if (target.includes(':')) {
+                                const targetParts = target.split(':');
+                                target = targetParts[0].trim();
+                                text = targetParts.slice(1).join(':').trim();
+                            }
+                            
+                            messages.push({
+                                source,
+                                target,
+                                text,
+                                isDashed: messageType.type === 'dashed'
+                            });
+                        }
+                    }
+                }
+            });
+            
+            return { participants, messages };
+        }
+
+        // ネイティブ図形生成（シーケンス図）
+        function generateSequenceNative(code) {
+            const { participants, messages } = parseSequenceDiagram(code);
+            
+            // 現在の日時
+            const currentTime = new Date().toISOString();
+            
+            // ユニークなID
+            const uniqueId = 'native' + Math.random().toString(36).substr(2, 8);
+            
+            // Draw.io XMLを生成
+            let xml = `<mxfile host="Electron" modified="${currentTime}" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/26.0.9 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36" version="26.0.9">
+  <diagram name="Page-1" id="mermaid-sequence">
     <mxGraphModel dx="1306" dy="836" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="${uniqueId}-2" value="" style="shape=image;verticalLabelPosition=bottom;verticalAlign=top;imageAspect=0;image=data:image/svg+xml;base64,${encodedSvg}" vertex="1" parent="1">
-          <mxGeometry x="10" y="10" width="800" height="600" as="geometry" />
-        </mxCell>
-        <!-- Original Mermaid Code:
-${lastMermaidCode}
--->
+        
+        <!-- 参加者定義 -->`;
+            
+            // 参加者を追加
+            participants.forEach((participant, index) => {
+                const x = 40 + index * 200;
+                xml += `
+        <mxCell id="participant_${index}" value="${participant}" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="${x}" y="40" width="120" height="40" as="geometry" />
+        </mxCell>`;
+            });
+            
+            // 垂直ライン
+            participants.forEach((participant, index) => {
+                const x = 100 + index * 200;
+                xml += `
+        <mxCell id="line_${index}" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=1;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="${x}" y="80" as="sourcePoint" />
+            <mxPoint x="${x}" y="${80 + 40 + messages.length * 40}" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>`;
+            });
+            
+            // メッセージを追加
+            messages.forEach((message, index) => {
+                // 送信者と受信者のインデックスを取得
+                const sourceIndex = participants.indexOf(message.source);
+                const targetIndex = participants.indexOf(message.target);
+                
+                if (sourceIndex === -1 || targetIndex === -1) {
+                    console.warn(`メッセージの送信者または受信者が見つかりません: ${message.source} -> ${message.target}`);
+                    return;
+                }
+                
+                const sourceX = 100 + sourceIndex * 200;
+                const targetX = 100 + targetIndex * 200;
+                const y = 120 + index * 40;
+
+                // メッセージスタイル（実線または破線）
+                const style = message.isDashed ? 
+                    'edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;' : 
+                    'edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;';
+                
+                xml += `
+        <mxCell id="msg_${index}" value="${message.text}" style="${style}" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="${sourceX}" y="${y}" as="sourcePoint" />
+            <mxPoint x="${targetX}" y="${y}" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>`;
+            });
+            
+            // フッターを追加
+            participants.forEach((participant, index) => {
+                const x = 40 + index * 200;
+                const y = 80 + 40 + messages.length * 40;
+                
+                xml += `
+        <mxCell id="footer_${index}" value="${participant}" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="${x}" y="${y}" width="120" height="40" as="geometry" />
+        </mxCell>`;
+            });
+            
+            // XMLを完成
+            xml += `
       </root>
     </mxGraphModel>
   </diagram>
 </mxfile>`;
+            
+            return xml;
+        }
 
-                // XMLを表示
-                xmlOutput.value = drawioXml;
-                outputArea.style.display = 'block';
+        // フローチャートの解析
+        function parseFlowchart(code) {
+            const lines = code.split('\n').map(line => line.trim()).filter(line => line);
+            const nodes = new Map();
+            const connections = [];
+            
+            // ノード情報を抽出（フォーマット: A[label]）
+            const nodeRegex = /([A-Za-z0-9_]+)(?:\[([^\]]+)\]|\(([^\)]+)\)|{([^}]+)})/g;
+            const connectionRegex = /([A-Za-z0-9_]+)\s*--(?:-+)(?:>|&gt;)\s*(?:\|([^|]+)\|\s*)?([A-Za-z0-9_]+)/g;
+            
+            // ノードの検出
+            lines.forEach(line => {
+                let match;
+                while ((match = nodeRegex.exec(line)) !== null) {
+                    const id = match[1];
+                    const label = match[2] || match[3] || match[4] || id;
+                    const shape = match[2] ? 'rectangle' : (match[3] ? 'rounded' : 'rhombus');
+                    
+                    if (!nodes.has(id)) {
+                        nodes.set(id, { id, label, shape });
+                    }
+                }
+            });
+            
+            // 接続の検出
+            lines.forEach(line => {
+                let match;
+                connectionRegex.lastIndex = 0;
+                while ((match = connectionRegex.exec(line)) !== null) {
+                    const source = match[1];
+                    const label = match[2] || '';
+                    const target = match[3];
+                    
+                    connections.push({ source, target, label });
+                    
+                    // 自動的にノードを追加（未定義の場合）
+                    if (!nodes.has(source)) {
+                        nodes.set(source, { id: source, label: source, shape: 'rectangle' });
+                    }
+                    if (!nodes.has(target)) {
+                        nodes.set(target, { id: target, label: target, shape: 'rectangle' });
+                    }
+                }
+            });
+            
+            return { nodes: Array.from(nodes.values()), connections };
+        }
+
+        // ネイティブ図形生成（フローチャート）
+        function generateFlowchartNative(code) {
+            const { nodes, connections } = parseFlowchart(code);
+            
+            // 現在の日時
+            const currentTime = new Date().toISOString();
+            
+            // ユニークなID
+            const uniqueId = 'native' + Math.random().toString(36).substr(2, 8);
+            
+            // レイアウト計算（簡易版）
+            let grid = {};
+            let maxRow = 0;
+            let maxCol = 0;
+            
+            // 簡易的なレイアウト計算（深さ優先探索）
+            function calculateLayout() {
+                const visited = new Set();
                 
-                updateStatus("✅ Draw.io XML生成が完了しました！");
-            } catch (error) {
-                updateStatus("エラー: " + error.message, true);
+                function dfs(nodeId, row, col) {
+                    if (visited.has(nodeId)) return;
+                    visited.add(nodeId);
+                    
+                    grid[nodeId] = { row, col };
+                    maxRow = Math.max(maxRow, row);
+                    maxCol = Math.max(maxCol, col);
+                    
+                    let childCol = col;
+                    const children = connections.filter(conn => conn.source === nodeId).map(conn => conn.target);
+                    
+                    children.forEach((childId, index) => {
+                        dfs(childId, row + 1, col + index);
+                        childCol = col + index + 1;
+                    });
+                }
+                
+                // 最初のノードから開始
+                if (nodes.length > 0) {
+                    dfs(nodes[0].id, 0, 0);
+                }
+                
+                // 未訪問のノードを処理
+                nodes.forEach(node => {
+                    if (!visited.has(node.id)) {
+                        maxCol++;
+                        dfs(node.id, 0, maxCol);
+                    }
+                });
             }
-        });
+            
+            calculateLayout();
+            
+            // Draw.io XMLを生成
+            let xml = `<mxfile host="Electron" modified="${currentTime}" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/26.0.9 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36" version="26.0.9">
+  <diagram name="Page-1" id="mermaid-flowchart">
+    <mxGraphModel dx="1306" dy="836" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- ノード定義 -->`;
+            
+            // ノードを追加
+            nodes.forEach(node => {
+                const pos = grid[node.id] || { row: 0, col: 0 };
+                const x = 50 + pos.col * 150;
+                const y = 50 + pos.row * 100;
+                
+                let style = "";
+                
+                switch (node.shape) {
+                    case 'rectangle':
+                        style = "rounded=0;whiteSpace=wrap;html=1;";
+                        break;
+                    case 'rounded':
+                        style = "rounded=1;whiteSpace=wrap;html=1;";
+                        break;
+                    case 'rhombus':
+                        style = "rhombus;whiteSpace=wrap;html=1;";
+                        break;
+                    default:
+                        style = "rounded=0;whiteSpace=wrap;html=1;";
+                }
+                
+                xml += `
+        <mxCell id="node_${node.id}" value="${node.label}" style="${style}" vertex="1" parent="1">
+          <mxGeometry x="${x}" y="${y}" width="120" height="60" as="geometry" />
+        </mxCell>`;
+            });
+            
+            // 接続を追加
+            connections.forEach((conn, index) => {
+                xml += `
+        <mxCell id="conn_${index}" value="${conn.label}" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="node_${conn.source}" target="node_${conn.target}">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>`;
+            });
+            
+            // XMLを完成
+            xml += `
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>`;
+            
+            return xml;
+        }
 
-        // ネイティブ図形生成ボタン (シーケンス図用)
+        // ネイティブ図形生成ボタン
         nativeBtn.addEventListener('click', function() {
             if (!lastMermaidCode) {
                 updateStatus("Mermaidコードを入力して先にプレビューを表示してください。", true);
@@ -255,140 +493,17 @@ ${lastMermaidCode}
             updateStatus("ネイティブ図形のDraw.io XML形式に変換しています...");
             
             try {
-                // シーケンス図かどうかチェック
-                if (!lastMermaidCode.trim().startsWith('sequenceDiagram')) {
-                    updateStatus("現在この機能はシーケンス図のみサポートしています。", true);
+                let drawioXml = "";
+                
+                // ダイアグラムタイプに応じた変換処理
+                if (lastMermaidCode.trim().startsWith('sequenceDiagram')) {
+                    drawioXml = generateSequenceNative(lastMermaidCode);
+                } else if (lastMermaidCode.trim().startsWith('graph')) {
+                    drawioXml = generateFlowchartNative(lastMermaidCode);
+                } else {
+                    updateStatus("このタイプのダイアグラムは現在サポートされていません。", true);
                     return;
                 }
-                
-                // シーケンス図の解析 (簡易版)
-                const lines = lastMermaidCode.split('\n').map(line => line.trim()).filter(line => line);
-                const participants = [];
-                const messages = [];
-                
-                // 参加者とメッセージの解析
-                lines.forEach(line => {
-                    if (line.startsWith('participant ')) {
-                        participants.push(line.replace('participant ', '').trim());
-                    } else if (line.includes('->') || line.includes('->>') || line.includes('-->>') || line.includes('-->')) {
-                        // メッセージを解析
-                        let parts;
-                        let messageLine = line;
-                        let isReturn = false;
-                        
-                        if (line.includes('->>')) {
-                            parts = line.split('->>');
-                            isReturn = false;
-                        } else if (line.includes('->')) {
-                            parts = line.split('->');
-                            isReturn = false;
-                        } else if (line.includes('-->>')) {
-                            parts = line.split('-->>');
-                            isReturn = true;
-                        } else if (line.includes('-->')) {
-                            parts = line.split('-->');
-                            isReturn = true;
-                        }
-                        
-                        if (parts && parts.length === 2) {
-                            const source = parts[0].trim();
-                            let target = parts[1];
-                            let text = '';
-                            
-                            if (target.includes(':')) {
-                                const targetParts = target.split(':');
-                                target = targetParts[0].trim();
-                                text = targetParts[1].trim();
-                            }
-                            
-                            messages.push({
-                                source,
-                                target,
-                                text,
-                                isReturn
-                            });
-                        }
-                    }
-                });
-                
-                // 現在の日時
-                const currentTime = new Date().toISOString();
-                
-                // ユニークなID
-                const uniqueId = 'native' + Math.random().toString(36).substr(2, 8);
-                
-                // Draw.io XMLを生成
-                let drawioXml = `<mxfile host="Electron" modified="${currentTime}" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/26.0.9 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36" version="26.0.9">
-  <diagram name="Page-1" id="mermaid-sequence">
-    <mxGraphModel dx="1306" dy="836" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
-      <root>
-        <mxCell id="0" />
-        <mxCell id="1" parent="0" />
-        
-        <!-- 参加者定義 -->`;
-                
-                // 参加者を追加
-                participants.forEach((participant, index) => {
-                    const x = 40 + index * 200;
-                    drawioXml += `
-        <mxCell id="participant_${index}" value="${participant}" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-          <mxGeometry x="${x}" y="40" width="120" height="40" as="geometry" />
-        </mxCell>`;
-                });
-                
-                // 垂直ライン
-                participants.forEach((participant, index) => {
-                    const x = 100 + index * 200;
-                    drawioXml += `
-        <mxCell id="line_${index}" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=1;" edge="1" parent="1">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="${x}" y="80" as="sourcePoint" />
-            <mxPoint x="${x}" y="${80 + 40 + messages.length * 40}" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>`;
-                });
-                
-                // メッセージを追加
-                messages.forEach((message, index) => {
-                    // 送信者と受信者のインデックスを取得
-                    const sourceIndex = participants.indexOf(message.source);
-                    const targetIndex = participants.indexOf(message.target);
-                    
-                    if (sourceIndex === -1 || targetIndex === -1) {
-                        console.warn(`メッセージの送信者または受信者が見つかりません: ${message.source} -> ${message.target}`);
-                        return;
-                    }
-                    
-                    const sourceX = 100 + sourceIndex * 200;
-                    const targetX = 100 + targetIndex * 200;
-                    const y = 120 + index * 40;
-                    
-                    drawioXml += `
-        <mxCell id="msg_${index}" value="${message.text}" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;${message.isReturn ? 'dashed=1;' : ''}" edge="1" parent="1">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="${sourceX}" y="${y}" as="sourcePoint" />
-            <mxPoint x="${targetX}" y="${y}" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>`;
-                });
-                
-                // フッターを追加
-                participants.forEach((participant, index) => {
-                    const x = 40 + index * 200;
-                    const y = 80 + 40 + messages.length * 40;
-                    
-                    drawioXml += `
-        <mxCell id="footer_${index}" value="${participant}" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-          <mxGeometry x="${x}" y="${y}" width="120" height="40" as="geometry" />
-        </mxCell>`;
-                });
-                
-                // XMLを完成
-                drawioXml += `
-      </root>
-    </mxGraphModel>
-  </diagram>
-</mxfile>`;
                 
                 // XMLを表示
                 xmlOutput.value = drawioXml;
@@ -425,7 +540,7 @@ ${lastMermaidCode}
         });
 
         // 初期化時のデフォルトコード設定
-        mermaidInput.value = templates['flowchart'];
+        mermaidInput.value = templates['sequence'];
     </script>
 </body>
 </html>
